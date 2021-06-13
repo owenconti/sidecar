@@ -6,14 +6,18 @@
 namespace Hammerstone\Sidecar;
 
 use Aws\Lambda\Exception\LambdaException;
+use Aws\MockHandler;
+use Aws\Result;
 use Hammerstone\Sidecar\Clients\LambdaClient;
 use Hammerstone\Sidecar\Events\AfterFunctionExecuted;
 use Hammerstone\Sidecar\Events\BeforeFunctionExecuted;
 use Hammerstone\Sidecar\Exceptions\FunctionNotFoundException;
+use Hammerstone\Sidecar\Exceptions\SidecarException;
 use Hammerstone\Sidecar\Results\PendingResult;
 use Illuminate\Console\Command;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Traits\Macroable;
+use PHPUnit\Framework\Assert;
 use Throwable;
 
 class Manager
@@ -34,6 +38,41 @@ class Manager
      * @var bool
      */
     protected $sublog = false;
+
+    protected $recording = false;
+
+    protected $recordedExecutions = [];
+
+    protected $mockedResponse = null;
+
+    public function fake($mockedResponse)
+    {
+        $this->recording = true;
+        $this->mockedResponse = $mockedResponse;
+    }
+
+    public function assertExecuted($function, $expectedParameters)
+    {
+        if (!$this->recording) {
+            throw new SidecarException('You called assertExecuted() without calling fake()');
+        }
+
+        if (is_string($function)) {
+            $function = app($function);
+        }
+
+        $executions = collect($this->recordedExecutions)->filter(function ($execution) use ($function, $expectedParameters) {
+            return $execution == [
+                'function' => $function->nameWithPrefix(),
+                'payload' => $expectedParameters
+            ];
+        });
+
+        Assert::assertTrue(
+            $executions->count() > 0,
+            'An expected execution was not recorded.'
+        );
+    }
 
     /**
      * @param $closure
@@ -129,28 +168,39 @@ class Manager
 
         $function->beforeExecution($payload);
 
-        try {
-            $result = app(LambdaClient::class)->{$method}([
-                // Function name plus our alias name.
-                'FunctionName' => $function->nameWithPrefix() . ':active',
+        $functionPayload = [
+            // Function name plus our alias name.
+            'FunctionName' => $function->nameWithPrefix() . ':active',
 
-                // `RequestResponse` is a synchronous call, vs `Event` which
-                // is a fire-and-forget, we can make it async by using the
-                // invokeAsync method.
-                'InvocationType' => 'RequestResponse',
+            // `RequestResponse` is a synchronous call, vs `Event` which
+            // is a fire-and-forget, we can make it async by using the
+            // invokeAsync method.
+            'InvocationType' => 'RequestResponse',
 
-                // Include the execution log in the response.
-                'LogType' => 'Tail',
+            // Include the execution log in the response.
+            'LogType' => 'Tail',
 
-                // Pass the payload to the function.
-                'Payload' => json_encode($payload)
-            ]);
-        } catch (LambdaException $e) {
-            if ($e->getStatusCode() === 404) {
-                throw FunctionNotFoundException::make($function);
+            // Pass the payload to the function.
+            'Payload' => json_encode($payload)
+        ];
+
+        if (!$this->recording) {
+            try {
+                $result = app(LambdaClient::class)->{$method}($functionPayload);
+            } catch (LambdaException $e) {
+                if ($e->getStatusCode() === 404) {
+                    throw FunctionNotFoundException::make($function);
+                }
+    
+                throw $e;
             }
+        } else {
+            $this->recordedExecutions[] = [
+                'function' => $function->nameWithPrefix(),
+                'payload' => $payload
+            ];
 
-            throw $e;
+            $result = $this->mockExecution($method, $functionPayload);
         }
 
         // Let the calling function determine what to do with the result.
@@ -247,5 +297,18 @@ class Manager
 
             $function::executeManyAsync($payloads);
         });
+    }
+
+    private function mockExecution($method, $functionPayload)
+    {
+        $mock = new MockHandler();
+        // Enqueue a mock result to the handler
+        $mock->append(new Result(['Payload' => $this->mockedResponse]));
+
+        /** @var LambdaClient */
+        $client = app(LambdaClient::class);
+        $command = $client->getCommand($method, $functionPayload);
+        $command->getHandlerList()->setHandler($mock);
+        return $client->execute($command);
     }
 }

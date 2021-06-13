@@ -14,6 +14,16 @@ use Illuminate\Support\Str;
 
 abstract class LambdaFunction
 {
+    public static function fake($mockedResponse)
+    {
+        return Sidecar::fake($mockedResponse);
+    }
+
+    public static function assertExecuted($expectedPayload)
+    {
+        return Sidecar::assertExecuted(static::class, $expectedPayload);
+    }
+
     /**
      * Execute the current function and return the response.
      *
