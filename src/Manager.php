@@ -302,13 +302,13 @@ class Manager
     private function mockExecution($method, $functionPayload)
     {
         $mock = new MockHandler();
-        // Enqueue a mock result to the handler
         $mock->append(new Result(['Payload' => json_encode($this->mockedResponse)]));
 
         /** @var LambdaClient */
         $client = app(LambdaClient::class);
         $command = $client->getCommand($method, $functionPayload);
         $command->getHandlerList()->setHandler($mock);
+
         return $client->execute($command);
     }
 }
