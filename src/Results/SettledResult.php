@@ -54,7 +54,7 @@ class SettledResult implements Responsable, ResultContract
      */
     public function isError()
     {
-        return $this->raw->get('FunctionError') !== '';
+        return $this->raw->hasKey('FunctionError') && !empty($this->raw->get('FunctionError'));
     }
 
     /**
