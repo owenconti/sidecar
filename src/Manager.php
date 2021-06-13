@@ -303,7 +303,7 @@ class Manager
     {
         $mock = new MockHandler();
         // Enqueue a mock result to the handler
-        $mock->append(new Result(['Payload' => $this->mockedResponse]));
+        $mock->append(new Result(['Payload' => json_encode($this->mockedResponse)]));
 
         /** @var LambdaClient */
         $client = app(LambdaClient::class);
